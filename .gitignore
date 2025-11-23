@@ -1,0 +1,12 @@
+# Ignore virtual environments
+.venv*
+venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Ignore build artifacts
+*.so
+*.dll
+*.dylib
