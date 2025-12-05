@@ -5,18 +5,22 @@ from camera_module import HandTracker
 from gesture_module import count_fingers
 from servo_controller import ServoController
 from actions import gesture_actions, motion_lock
+from language_module import interpret_command
 
-shutdown_flag = False  # NEW: global flag to stop new threads
-active_threads = []    # Track running gesture threads
+def execute_openai_actions(servo, actions):
+    """Execute servo actions returned by OpenAI."""
+    with motion_lock:
+        for act in actions:
+            servo.send_command(act["servo"], act["angle"])
+            time.sleep(0.3)
 
 def main():
-    global shutdown_flag, active_threads
-
     servo = ServoController("/dev/ttyUSB0", 9600)
     tracker = HandTracker()
     last_finger_count = -1
 
-    print("✅ Gesture-Control System Started")
+    print("✅ VLA System Started — type a command at any time.")
+    print("💬 Example: 'pick up the object', 'rotate base', 'reset all'")
 
     while True:
         frame, result = tracker.get_frame()
@@ -31,28 +35,29 @@ def main():
 
         cv2.putText(frame, f"Fingers: {finger_count}", (30, 60),
                     cv2.FONT_HERSHEY_SIMPLEX, 1.5, (0, 255, 0), 3)
+        tracker.show(frame)
 
-        # Only trigger if system is active
-        if not shutdown_flag and finger_count != last_finger_count and not motion_lock.locked():
-            print(f"🖐 {finger_count} fingers detected")
-            thread = threading.Thread(target=gesture_actions[finger_count], args=(servo,))
-            thread.start()
-            active_threads.append(thread)
+        # Gesture handling (existing)
+        if finger_count != last_finger_count and not motion_lock.locked():
+            print(f"🖐 Gesture detected: {finger_count} fingers")
+            threading.Thread(target=gesture_actions[finger_count], args=(servo,)).start()
             last_finger_count = finger_count
 
-        tracker.show(frame)
-        if cv2.waitKey(1) & 0xFF == 27:  # ESC pressed
-            print("\n🛑 Shutting down gracefully...")
-            shutdown_flag = True
-            break
+        # --- Language Input ---
+        if cv2.waitKey(1) & 0xFF == ord('c'):  # press 'c' to enter a command
+            user_input = input("\n💬 Enter command: ")
+            context = f"{finger_count} fingers shown"
+            actions = interpret_command(user_input, context)
+            if actions:
+                print(f"🧠 OpenAI decided actions: {actions}")
+                threading.Thread(target=execute_openai_actions, args=(servo, actions)).start()
 
-    # Wait for all threads to finish safely
-    for t in active_threads:
-        t.join()
+        if cv2.waitKey(1) & 0xFF == 27:  # ESC to exit
+            print("🛑 Exiting...")
+            break
 
     tracker.release()
     servo.close()
-    print("✅ Shutdown complete — port closed safely.")
 
 if __name__ == "__main__":
     main()

@@ -1,71 +1,85 @@
 #include <Wire.h>
-#include <Servo.h>
 #include <Adafruit_PWMServoDriver.h>
 
 Adafruit_PWMServoDriver pwm = Adafruit_PWMServoDriver();
-char incomingData;
 
-Servo servo1; // Base rotation
-Servo servo2; // Shoulder
-Servo servo3; // Elbow
-Servo servo4; // Wrist
-Servo servo5; // Gripper
-Servo servo6; // Optional (extra motor)
+#define SERVOMIN 150
+#define SERVOMAX 600
+#define SERVO_FREQ 60
+
+int currentAngle[16];
+
+// Convert an angle (0–180°) to PCA9685 pulse value
+int angleToPulse(int angle) {
+  return map(angle, 0, 180, SERVOMIN, SERVOMAX);
+}
+
+// Smoothly move servo from current position to target
+void smoothMove(int ch, int target) {
+  int start = currentAngle[ch];
+  target = constrain(target, 0, 180);
+  int step = (target > start) ? 1 : -1;
+
+  for (int pos = start; pos != target; pos += step) {
+    pwm.setPWM(ch, 0, angleToPulse(pos));
+    delay(10);
+  }
+
+  pwm.setPWM(ch, 0, angleToPulse(target));
+  currentAngle[ch] = target;
+  delay(200);
+}
 
 void setup() {
-  Serial.begin(9600); // Serial communication with Python
+  Serial.begin(9600);
   pwm.begin();
-  pwm.setPWMFreq(60); // Typical servo frequency
+  pwm.setPWMFreq(SERVO_FREQ);
+  delay(500);
 
-  // Attach servos to pins (you can change as needed)
-  servo1.attach(3);
-  servo2.attach(5);
-  servo3.attach(6);
-  servo4.attach(9);
-  servo5.attach(10);
-  servo6.attach(11);
+  // Initialize servos (channels 0,2,6,9,14,15)
+  int channels[] = {0, 2, 6, 9, 14, 15};
+  for (int i = 0; i < 6; i++) {
+    int ch = channels[i];
+    currentAngle[ch] = 90;
+    pwm.setPWM(ch, 0, angleToPulse(90));
+    delay(200);
+  }
 
-  // Initial neutral positions
-  servo1.write(90);
-  servo2.write(90);
-  servo3.write(90);
-  servo4.write(90);
-  servo5.write(90);
-  servo6.write(90);
+  Serial.println("✅ 6-Servo Smooth Controller Ready (Base included)");
+  Serial.println("Use: S,<channel>,<angle> or S,ALL,<angle>");
 }
 
 void loop() {
   if (Serial.available()) {
-    incomingData = Serial.read();
+    String line = Serial.readStringUntil('\n');
+    line.trim();
 
-    // --- Arm Movement Commands ---
-    if (incomingData == 'A') {
-      servo1.write(45);   // Base rotate close
-      servo2.write(60);   // Shoulder close
-      servo3.write(70);   // Elbow close
-      Serial.println("Arm Close");
-    }
-    else if (incomingData == 'B') {
-      servo1.write(90);   // Mid position
-      servo2.write(90);
-      servo3.write(90);
-      Serial.println("Arm Mid");
-    }
-    else if (incomingData == 'C') {
-      servo1.write(135);  // Arm extended
-      servo2.write(120);
-      servo3.write(110);
-      Serial.println("Arm Far");
-    }
+    if (line.startsWith("S,")) {
+      // Handle "S,ALL,<angle>"
+      if (line.startsWith("S,ALL,")) {
+        int target = line.substring(6).toInt();
+        int channels[] = {0, 2, 6, 9, 14, 15};
+        for (int i = 0; i < 6; i++) {
+          smoothMove(channels[i], target);
+        }
+        Serial.print("➡ ALL moved to ");
+        Serial.println(target);
+        return;
+      }
 
-    // --- Palm Gesture Commands ---
-    if (incomingData == 'O') {
-      servo5.write(0);   // Open gripper
-      Serial.println("Gripper Open");
-    }
-    if (incomingData == 'F') {
-      servo5.write(90);  // Close gripper
-      Serial.println("Gripper Closed");
+      // Handle "S,<channel>,<angle>"
+      int comma = line.indexOf(',', 2);
+      if (comma == -1) return;
+
+      int ch = line.substring(2, comma).toInt();
+      int angle = line.substring(comma + 1).toInt();
+      angle = constrain(angle, 0, 180);
+
+      smoothMove(ch, angle);
+      Serial.print("Servo ");
+      Serial.print(ch);
+      Serial.print(" → ");
+      Serial.println(angle);
     }
   }
 }
